@@ -1,0 +1,17 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0.0",
+  "FriendlyName": "RMA Channel Packer",
+  "Description": "Adds an Unreal Editor Content Browser action that packs three selected textures into a new _RMA texture.",
+  "Category": "Editor",
+  "EnabledByDefault": true,
+  "CanContainContent": false,
+  "Modules": [
+    {
+      "Name": "RMAChannelPackerEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}
