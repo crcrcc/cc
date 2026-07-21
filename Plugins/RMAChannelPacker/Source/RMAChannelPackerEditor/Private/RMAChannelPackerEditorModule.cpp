@@ -160,15 +160,6 @@ static bool ReadTexturePixels(UTexture2D* Texture, TArray64<uint8>& OutPixels, i
     return true;
 }
 
-static FString BuildSiblingPackagePath(UTexture2D* SourceTexture, const FString& AssetSuffix)
-{
-    FString PackagePath = SourceTexture->GetOutermost()->GetName();
-    FString Path;
-    FString Name;
-    PackagePath.Split(TEXT("/"), &Path, &Name, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
-    return Path / (Name + AssetSuffix);
-}
-
 static FString BuildOutputPackagePath(UTexture2D* RoughnessTexture)
 {
     FString PackagePath = RoughnessTexture->GetOutermost()->GetName();
@@ -201,23 +192,6 @@ static FString BuildOutputPackagePath(UTexture2D* RoughnessTexture)
     }
 
     return Path / (Name + TEXT("_RMA"));
-}
-
-static FString BuildAlphaOutputPackagePath(UTexture2D* BaseTexture)
-{
-    return BuildSiblingPackagePath(BaseTexture, TEXT("_Alpha"));
-}
-
-static void CopyTextureSettings(UTexture2D* SourceTexture, UTexture2D* OutputTexture)
-{
-    OutputTexture->CompressionSettings = SourceTexture->CompressionSettings;
-    OutputTexture->SRGB = SourceTexture->SRGB;
-    OutputTexture->MipGenSettings = SourceTexture->MipGenSettings;
-    OutputTexture->LODGroup = SourceTexture->LODGroup;
-    OutputTexture->Filter = SourceTexture->Filter;
-    OutputTexture->AddressX = SourceTexture->AddressX;
-    OutputTexture->AddressY = SourceTexture->AddressY;
-    OutputTexture->NeverStream = SourceTexture->NeverStream;
 }
 
 static void AddAlphaToSelectedTexture(const FToolMenuContext& MenuContext)
@@ -263,21 +237,13 @@ static void AddAlphaToSelectedTexture(const FToolMenuContext& MenuContext)
         }
     }
 
-    FString OutputPackagePath = BuildAlphaOutputPackagePath(Textures[0]);
-    FString OutputAssetName = FPackageName::GetLongPackageAssetName(OutputPackagePath);
-    FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-    AssetToolsModule.Get().CreateUniqueAssetName(OutputPackagePath, TEXT(""), OutputPackagePath, OutputAssetName);
+    UTexture2D* BaseTexture = Textures[0];
+    BaseTexture->Modify();
+    BaseTexture->Source.Init(BaseWidth, BaseHeight, 1, 1, TSF_BGRA8, OutputPixels.GetData());
+    BaseTexture->PostEditChange();
+    BaseTexture->MarkPackageDirty();
 
-    UPackage* Package = CreatePackage(*OutputPackagePath);
-    UTexture2D* OutputTexture = NewObject<UTexture2D>(Package, *OutputAssetName, RF_Public | RF_Standalone | RF_Transactional);
-    OutputTexture->Source.Init(BaseWidth, BaseHeight, 1, 1, TSF_BGRA8, OutputPixels.GetData());
-    CopyTextureSettings(Textures[0], OutputTexture);
-    OutputTexture->PostEditChange();
-
-    FAssetRegistryModule::AssetCreated(OutputTexture);
-    Package->MarkPackageDirty();
-
-    ShowMessage(FText::Format(LOCTEXT("AlphaComplete", "Created {0}\n\nRGB = first selected texture\nA = second selected texture"), FText::FromString(OutputPackagePath)), LOCTEXT("AlphaCompleteTitle", "RMA Channel Packer"));
+    ShowMessage(FText::Format(LOCTEXT("AlphaComplete", "Updated {0}\n\nRGB = first selected texture\nA = second selected texture"), FText::FromString(BaseTexture->GetOutermost()->GetName())), LOCTEXT("AlphaCompleteTitle", "RMA Channel Packer"));
 }
 
 static void PackSelectedTextures(const FToolMenuContext& MenuContext)
@@ -370,7 +336,7 @@ void FRMAChannelPackerEditorModule::RegisterMenus()
     Section.AddMenuEntry(
         TEXT("AddAlphaChannel"),
         LOCTEXT("AddAlphaChannelLabel", "Create Texture With Alpha"),
-        LOCTEXT("AddAlphaChannelTooltip", "Select two Texture2D assets in order: RGB/base texture first, alpha texture second. Creates a new texture that preserves the first texture settings and uses the second texture as alpha."),
+        LOCTEXT("AddAlphaChannelTooltip", "Select two Texture2D assets in order: RGB/base texture first, alpha texture second. Updates the first texture in place and uses the second texture as alpha."),
         FSlateIcon(),
         FToolMenuExecuteAction::CreateStatic(&RMAChannelPacker::AddAlphaToSelectedTexture));
 }
