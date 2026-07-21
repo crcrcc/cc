@@ -15,14 +15,22 @@ Default channel order:
 2. Open the project in Unreal Engine 5.6 and enable **RMA Channel Packer** if
    the plugin is not already enabled.
 3. In the Content Browser, select exactly three `Texture2D` assets in this
-   order: Roughness, Metallic, Ambient Occlusion.
+   order, even if they are in different folders: Roughness, Metallic, Ambient
+   Occlusion.
 4. Right-click the selection and choose **Create RMA Texture**.
-5. The plugin creates a new texture next to the Roughness texture with the
-   `_RMA` suffix. The generated texture uses `TC_Masks`, disables sRGB, and
-   disables mip generation.
+5. The plugin creates a new texture next to the Roughness texture. It removes
+   common map suffixes such as `_Roughness`, `_R`, `_Metallic`, `_M`, `_AO`,
+   and `_Occlusion`, then adds `_RMA`; for example, `T_Wall_Roughness`,
+   `T_Wall_Metallic`, and `T_Wall_AO` generate `T_Wall_RMA`.
+6. The generated texture uses the first selected Roughness texture resolution.
+   If Metallic or AO has a different resolution, the plugin warns you and
+   resizes those channels to match Roughness before creating the packed asset.
+7. The generated texture uses `TC_Masks`, disables sRGB, and disables mip
+   generation.
 
-All source textures must have the same resolution and must contain CPU-readable
-source art. Supported source formats are G8, BGRA8, RGBA16, and RGBA16F.
+All source textures must contain CPU-readable source art. Cross-folder Content
+Browser selections are supported. Supported source formats are G8, BGRA8,
+RGBA16, and RGBA16F.
 
 ## Legacy standalone script
 

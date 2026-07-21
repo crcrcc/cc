@@ -15,8 +15,6 @@ public class RMAChannelPackerEditor : ModuleRules
             "CoreUObject",
             "EditorFramework",
             "Engine",
-            "ImageCore",
-            "ImageWrapper",
             "Slate",
             "SlateCore",
             "ToolMenus",

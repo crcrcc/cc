@@ -2,7 +2,9 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "ContentBrowserModule.h"
 #include "ContentBrowserMenuContexts.h"
+#include "IContentBrowserSingleton.h"
 #include "Engine/Texture2D.h"
 #include "Misc/PackageName.h"
 #include "Misc/MessageDialog.h"
@@ -12,6 +14,7 @@
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
+#include "UObject/SoftObjectPath.h"
 
 #define LOCTEXT_NAMESPACE "RMAChannelPackerEditor"
 
@@ -24,20 +27,53 @@ static void ShowMessage(const FText& Message, const FText& Title)
     FMessageDialog::Open(EAppMsgType::Ok, Message, Title);
 }
 
+static void AddTextureAsset(const FAssetData& Asset, TArray<UTexture2D*>& Textures, TSet<FSoftObjectPath>& SeenAssets)
+{
+    const FSoftObjectPath AssetPath = Asset.ToSoftObjectPath();
+    if (SeenAssets.Contains(AssetPath))
+    {
+        return;
+    }
+
+    if (UTexture2D* Texture = Cast<UTexture2D>(Asset.GetAsset()))
+    {
+        Textures.Add(Texture);
+        SeenAssets.Add(AssetPath);
+    }
+}
+
 static TArray<UTexture2D*> GetSelectedTextures(const FToolMenuContext& MenuContext)
 {
     TArray<UTexture2D*> Textures;
-    if (const UContentBrowserAssetContextMenuContext* Context = MenuContext.FindContext<UContentBrowserAssetContextMenuContext>())
+    TSet<FSoftObjectPath> SeenAssets;
+
+    FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser"));
+    TArray<FAssetData> BrowserSelectedAssets;
+    ContentBrowserModule.Get().GetSelectedAssets(BrowserSelectedAssets);
+    for (const FAssetData& Asset : BrowserSelectedAssets)
     {
-        for (const FAssetData& Asset : Context->SelectedAssets)
+        AddTextureAsset(Asset, Textures, SeenAssets);
+    }
+
+    if (Textures.Num() == 0)
+    {
+        if (const UContentBrowserAssetContextMenuContext* Context = MenuContext.FindContext<UContentBrowserAssetContextMenuContext>())
         {
-            if (UTexture2D* Texture = Cast<UTexture2D>(Asset.GetAsset()))
+            for (const FAssetData& Asset : Context->SelectedAssets)
             {
-                Textures.Add(Texture);
+                AddTextureAsset(Asset, Textures, SeenAssets);
             }
         }
     }
+
     return Textures;
+}
+
+static uint8 SampleRedChannelNearest(const TArray64<uint8>& Pixels, int32 SourceWidth, int32 SourceHeight, int32 TargetX, int32 TargetY, int32 TargetWidth, int32 TargetHeight)
+{
+    const int32 SourceX = FMath::Clamp(FMath::RoundToInt((static_cast<float>(TargetX) + 0.5f) * SourceWidth / TargetWidth - 0.5f), 0, SourceWidth - 1);
+    const int32 SourceY = FMath::Clamp(FMath::RoundToInt((static_cast<float>(TargetY) + 0.5f) * SourceHeight / TargetHeight - 0.5f), 0, SourceHeight - 1);
+    return Pixels[(static_cast<int64>(SourceY) * SourceWidth + SourceX) * ChannelCount + 0];
 }
 
 static bool ReadTexturePixels(UTexture2D* Texture, TArray64<uint8>& OutPixels, int32& OutWidth, int32& OutHeight, FString& OutError)
@@ -131,7 +167,21 @@ static FString BuildOutputPackagePath(UTexture2D* RoughnessTexture)
     FString Name;
     PackagePath.Split(TEXT("/"), &Path, &Name, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
 
-    const FString Suffixes[] = {TEXT("_Roughness"), TEXT("_roughness"), TEXT("_Rough"), TEXT("_rough"), TEXT("_R"), TEXT("_r")};
+    const FString Suffixes[] = {
+        TEXT("_Roughness"),
+        TEXT("_roughness"),
+        TEXT("_Metallic"),
+        TEXT("_metallic"),
+        TEXT("_Occlusion"),
+        TEXT("_occlusion"),
+        TEXT("_Rough"),
+        TEXT("_rough"),
+        TEXT("_AO"),
+        TEXT("_ao"),
+        TEXT("_M"),
+        TEXT("_m"),
+        TEXT("_R"),
+        TEXT("_r")};
     for (const FString& Suffix : Suffixes)
     {
         if (Name.EndsWith(Suffix))
@@ -169,19 +219,22 @@ static void PackSelectedTextures(const FToolMenuContext& MenuContext)
 
     if (Widths[0] != Widths[1] || Widths[0] != Widths[2] || Heights[0] != Heights[1] || Heights[0] != Heights[2])
     {
-        ShowMessage(LOCTEXT("ResolutionMismatch", "All three selected textures must have the same resolution."), LOCTEXT("PackingFailedTitle", "RMA Channel Packer"));
-        return;
+        ShowMessage(LOCTEXT("ResolutionMismatch", "Selected textures have different resolutions. Metallic and AO will be resized to match the first selected Roughness texture."), LOCTEXT("ResolutionMismatchTitle", "RMA Channel Packer"));
     }
 
     TArray64<uint8> PackedPixels;
     const int64 PixelCount = static_cast<int64>(Widths[0]) * Heights[0];
     PackedPixels.SetNumUninitialized(PixelCount * ChannelCount);
-    for (int64 PixelIndex = 0; PixelIndex < PixelCount; ++PixelIndex)
+    for (int32 Y = 0; Y < Heights[0]; ++Y)
     {
-        PackedPixels[PixelIndex * 4 + 0] = SourcePixels[2][PixelIndex * 4 + 0];
-        PackedPixels[PixelIndex * 4 + 1] = SourcePixels[1][PixelIndex * 4 + 0];
-        PackedPixels[PixelIndex * 4 + 2] = SourcePixels[0][PixelIndex * 4 + 0];
-        PackedPixels[PixelIndex * 4 + 3] = 255;
+        for (int32 X = 0; X < Widths[0]; ++X)
+        {
+            const int64 PixelIndex = static_cast<int64>(Y) * Widths[0] + X;
+            PackedPixels[PixelIndex * 4 + 0] = SampleRedChannelNearest(SourcePixels[2], Widths[2], Heights[2], X, Y, Widths[0], Heights[0]);
+            PackedPixels[PixelIndex * 4 + 1] = SampleRedChannelNearest(SourcePixels[1], Widths[1], Heights[1], X, Y, Widths[0], Heights[0]);
+            PackedPixels[PixelIndex * 4 + 2] = SourcePixels[0][PixelIndex * 4 + 0];
+            PackedPixels[PixelIndex * 4 + 3] = 255;
+        }
     }
 
     FString OutputPackagePath = BuildOutputPackagePath(Textures[0]);
