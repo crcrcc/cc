@@ -160,6 +160,15 @@ static bool ReadTexturePixels(UTexture2D* Texture, TArray64<uint8>& OutPixels, i
     return true;
 }
 
+static FString BuildSiblingPackagePath(UTexture2D* SourceTexture, const FString& AssetSuffix)
+{
+    FString PackagePath = SourceTexture->GetOutermost()->GetName();
+    FString Path;
+    FString Name;
+    PackagePath.Split(TEXT("/"), &Path, &Name, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+    return Path / (Name + AssetSuffix);
+}
+
 static FString BuildOutputPackagePath(UTexture2D* RoughnessTexture)
 {
     FString PackagePath = RoughnessTexture->GetOutermost()->GetName();
@@ -192,6 +201,83 @@ static FString BuildOutputPackagePath(UTexture2D* RoughnessTexture)
     }
 
     return Path / (Name + TEXT("_RMA"));
+}
+
+static FString BuildAlphaOutputPackagePath(UTexture2D* BaseTexture)
+{
+    return BuildSiblingPackagePath(BaseTexture, TEXT("_Alpha"));
+}
+
+static void CopyTextureSettings(UTexture2D* SourceTexture, UTexture2D* OutputTexture)
+{
+    OutputTexture->CompressionSettings = SourceTexture->CompressionSettings;
+    OutputTexture->SRGB = SourceTexture->SRGB;
+    OutputTexture->MipGenSettings = SourceTexture->MipGenSettings;
+    OutputTexture->LODGroup = SourceTexture->LODGroup;
+    OutputTexture->Filter = SourceTexture->Filter;
+    OutputTexture->AddressX = SourceTexture->AddressX;
+    OutputTexture->AddressY = SourceTexture->AddressY;
+    OutputTexture->NeverStream = SourceTexture->NeverStream;
+}
+
+static void AddAlphaToSelectedTexture(const FToolMenuContext& MenuContext)
+{
+    const TArray<UTexture2D*> Textures = GetSelectedTextures(MenuContext);
+    if (Textures.Num() != 2)
+    {
+        ShowMessage(LOCTEXT("NeedTwoTextures", "Select exactly two Texture2D assets in this order: Base color/RGB texture first, Alpha mask second."), LOCTEXT("InvalidAlphaSelectionTitle", "RMA Channel Packer"));
+        return;
+    }
+
+    TArray64<uint8> BasePixels;
+    TArray64<uint8> AlphaPixels;
+    int32 BaseWidth = 0;
+    int32 BaseHeight = 0;
+    int32 AlphaWidth = 0;
+    int32 AlphaHeight = 0;
+    FString Error;
+
+    if (!ReadTexturePixels(Textures[0], BasePixels, BaseWidth, BaseHeight, Error) || !ReadTexturePixels(Textures[1], AlphaPixels, AlphaWidth, AlphaHeight, Error))
+    {
+        ShowMessage(FText::FromString(Error), LOCTEXT("AlphaReadFailedTitle", "RMA Channel Packer"));
+        return;
+    }
+
+    if (BaseWidth != AlphaWidth || BaseHeight != AlphaHeight)
+    {
+        ShowMessage(LOCTEXT("AlphaResolutionMismatch", "Selected textures have different resolutions. The alpha texture will be resized to match the first selected texture."), LOCTEXT("ResolutionMismatchTitle", "RMA Channel Packer"));
+    }
+
+    TArray64<uint8> OutputPixels;
+    const int64 PixelCount = static_cast<int64>(BaseWidth) * BaseHeight;
+    OutputPixels.SetNumUninitialized(PixelCount * ChannelCount);
+    for (int32 Y = 0; Y < BaseHeight; ++Y)
+    {
+        for (int32 X = 0; X < BaseWidth; ++X)
+        {
+            const int64 PixelIndex = static_cast<int64>(Y) * BaseWidth + X;
+            OutputPixels[PixelIndex * 4 + 0] = BasePixels[PixelIndex * 4 + 2];
+            OutputPixels[PixelIndex * 4 + 1] = BasePixels[PixelIndex * 4 + 1];
+            OutputPixels[PixelIndex * 4 + 2] = BasePixels[PixelIndex * 4 + 0];
+            OutputPixels[PixelIndex * 4 + 3] = SampleRedChannelNearest(AlphaPixels, AlphaWidth, AlphaHeight, X, Y, BaseWidth, BaseHeight);
+        }
+    }
+
+    FString OutputPackagePath = BuildAlphaOutputPackagePath(Textures[0]);
+    FString OutputAssetName = FPackageName::GetLongPackageAssetName(OutputPackagePath);
+    FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+    AssetToolsModule.Get().CreateUniqueAssetName(OutputPackagePath, TEXT(""), OutputPackagePath, OutputAssetName);
+
+    UPackage* Package = CreatePackage(*OutputPackagePath);
+    UTexture2D* OutputTexture = NewObject<UTexture2D>(Package, *OutputAssetName, RF_Public | RF_Standalone | RF_Transactional);
+    OutputTexture->Source.Init(BaseWidth, BaseHeight, 1, 1, TSF_BGRA8, OutputPixels.GetData());
+    CopyTextureSettings(Textures[0], OutputTexture);
+    OutputTexture->PostEditChange();
+
+    FAssetRegistryModule::AssetCreated(OutputTexture);
+    Package->MarkPackageDirty();
+
+    ShowMessage(FText::Format(LOCTEXT("AlphaComplete", "Created {0}\n\nRGB = first selected texture\nA = second selected texture"), FText::FromString(OutputPackagePath)), LOCTEXT("AlphaCompleteTitle", "RMA Channel Packer"));
 }
 
 static void PackSelectedTextures(const FToolMenuContext& MenuContext)
@@ -280,6 +366,13 @@ void FRMAChannelPackerEditorModule::RegisterMenus()
         LOCTEXT("PackRMAChannelsTooltip", "Select three Texture2D assets in order: Roughness, Metallic, Ambient Occlusion. Creates a new _RMA texture in Unreal Editor."),
         FSlateIcon(),
         FToolMenuExecuteAction::CreateStatic(&RMAChannelPacker::PackSelectedTextures));
+
+    Section.AddMenuEntry(
+        TEXT("AddAlphaChannel"),
+        LOCTEXT("AddAlphaChannelLabel", "Create Texture With Alpha"),
+        LOCTEXT("AddAlphaChannelTooltip", "Select two Texture2D assets in order: RGB/base texture first, alpha texture second. Creates a new texture that preserves the first texture settings and uses the second texture as alpha."),
+        FSlateIcon(),
+        FToolMenuExecuteAction::CreateStatic(&RMAChannelPacker::AddAlphaToSelectedTexture));
 }
 
 #undef LOCTEXT_NAMESPACE

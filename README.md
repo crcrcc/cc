@@ -32,6 +32,19 @@ All source textures must contain CPU-readable source art. Cross-folder Content
 Browser selections are supported. Supported source formats are G8, BGRA8,
 RGBA16, and RGBA16F.
 
+## Add alpha in editor
+
+1. In the Content Browser, select exactly two `Texture2D` assets in this order:
+   base RGB texture first, alpha mask second.
+2. Right-click the selection and choose **Create Texture With Alpha**.
+3. The plugin creates a new texture next to the base texture with an `_Alpha`
+   suffix. The new texture keeps the first texture resolution and copies the
+   first texture settings such as compression, sRGB, mip generation, LOD group,
+   filter, addressing, and streaming; only the alpha channel is replaced with
+   the second selected texture.
+4. If the alpha texture resolution differs from the base texture, the plugin
+   warns you and resizes the alpha channel to match the base texture.
+
 ## Legacy standalone script
 
 `channel_packer.py` remains available for non-Unreal batch use, but the UE5.6
